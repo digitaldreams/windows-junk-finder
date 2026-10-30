@@ -128,6 +128,22 @@ Describe 'Windows' -Tag Windows {
         $r.Ok | Should -BeTrue
         [IO.File]::Exists($f) | Should -BeFalse
     }
+    It 'junk.cmd launched the Explorer way pauses and keeps the exit code' -Skip:($env:OS -ne 'Windows_NT') {
+        $cmd = [IO.Path]::GetFullPath((Join-Path (Join-Path $PSScriptRoot '..') 'junk.cmd'))
+        $psi = New-Object Diagnostics.ProcessStartInfo
+        $psi.FileName = 'cmd.exe'
+        $psi.Arguments = '/c ""' + $cmd + '" "'
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $p = [Diagnostics.Process]::Start($psi)
+        $p.StandardInput.Close()
+        $out = $p.StandardOutput.ReadToEnd() + $p.StandardError.ReadToEnd()
+        $p.WaitForExit()
+        $p.ExitCode | Should -Be 3
+        $out | Should -BeLike '*Press any key*'
+    }
     # ponytail: no child-process CLM test. __PSLockdownPolicy does not force CLM on the runner (CI run 41055797773);
     # the guard is covered on real 5.1 by the CLM runspace test in Report.Tests.ps1.
 }

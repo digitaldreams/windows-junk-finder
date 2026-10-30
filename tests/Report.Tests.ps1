@@ -196,4 +196,26 @@ Describe 'Main' {
         Main -Arguments @('clean') | Should -Be 2
         Main -Arguments @('clean', 'big') | Should -Be 2
     }
+    It 'prints the scanning line to the host before the scan, and not into the output stream' {
+        Mock Test-Elevated { $false }
+        $script:order = New-Object Collections.ArrayList
+        Mock Write-JunkLine { [void]$script:order.Add("line:$Text") }
+        Mock Invoke-JunkScan { [void]$script:order.Add('scan'); @() }
+        Mock Format-JunkReport { '' }
+        $out = @(Main -Arguments @())
+        $out | Should -Be @(0)
+        $script:order[0] | Should -Be 'line:Scanning ~... this can take a few minutes.'
+        $script:order[1] | Should -Be 'scan'
+    }
+    It 'prints the scanning line before the clean flow starts' {
+        Mock Test-Elevated { $false }
+        $script:order = New-Object Collections.ArrayList
+        Mock Write-JunkLine { [void]$script:order.Add("line:$Text") }
+        Mock Get-DownloadsFolder { 'C:\x' }
+        Mock Invoke-JunkClean { [void]$script:order.Add('clean'); 0 }
+        $out = @(Main -Arguments @('clean', 'caches'))
+        $out | Should -Be @(0)
+        $script:order[0] | Should -Be 'line:Scanning ~... this can take a few minutes.'
+        $script:order[1] | Should -Be 'clean'
+    }
 }

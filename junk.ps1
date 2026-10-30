@@ -726,12 +726,14 @@ function Main {
             if (-not $o.Ok) { $host.UI.WriteErrorLine($o.Message); return 2 }
             $root = $env:USERPROFILE
             if (-not $root) { $root = $HOME }
+            Write-JunkLine 'Scanning ~... this can take a few minutes.'
             return (Invoke-JunkClean $o $root ([string](Get-DownloadsFolder)) ([datetime]::UtcNow))
         }
         $host.UI.WriteErrorLine('Usage: junk'); return 2
     }
     $root = $env:USERPROFILE
     if (-not $root) { $root = $HOME }
+    Write-JunkLine 'Scanning ~... this can take a few minutes.'
     [Console]::Out.Write((Format-JunkReport (Invoke-JunkScan -Root $root -Now ([datetime]::UtcNow)) ([datetime]::UtcNow)))
     0
 }
