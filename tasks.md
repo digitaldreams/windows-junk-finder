@@ -280,7 +280,7 @@ Acceptance (TDD for plan, args and re-checks; fixtures on Linux):
 
 ## T7 CI on real Windows
 - Agent: windows-dev · Reviewer: windows-reviewer
-- Status: review (waiting for the first CI run)
+- Status: review (CI run 41055797773: 293 passed, 1 failed; the failing child-process CLM test was removed: `__PSLockdownPolicy` does not force CLM on the runner. The CLM runspace test passes on real 5.1.)
 
 `.github/workflows/test.yml` runs on `windows-latest` with `shell: powershell` (5.1). The tests themselves must then load on 5.1: fix PS7-only calls in `tests/` (e.g. 3-argument `Join-Path` in `Smoke.Tests.ps1`, flagged in T1 review). Module downloads in `test.sh` have no checksum (T1 review; accepted, dev-only).
 1. Install Pester 5 (`-Force -SkipPublisherCheck`).

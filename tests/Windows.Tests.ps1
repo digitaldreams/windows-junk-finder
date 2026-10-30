@@ -1,8 +1,7 @@
-# Windows-only checks: junctions, \\?\ long paths, ReadOnly, the real Recycle Bin call, Constrained Language Mode.
+# Windows-only checks: junctions, \\?\ long paths, ReadOnly, the real Recycle Bin call.
 # Every It is tagged Windows and skipped elsewhere. The CI runner is elevated, which is fine here: nothing calls Main.
 BeforeAll {
     . (Join-Path (Join-Path $PSScriptRoot '..') 'junk.ps1')
-    $script:Junk = [IO.Path]::GetFullPath((Join-Path (Join-Path $PSScriptRoot '..') 'junk.ps1'))
     $script:Now = [DateTime]::UtcNow.AddDays(100)
     function Add-Dir($p) { New-Item -ItemType Directory -Force -Path $p | Out-Null }
     function Add-File($p, [double]$ModDays = 0) {
@@ -129,20 +128,6 @@ Describe 'Windows' -Tag Windows {
         $r.Ok | Should -BeTrue
         [IO.File]::Exists($f) | Should -BeFalse
     }
-
-    It 'a child Windows PowerShell forced into Constrained Language Mode exits 3 with the message on stderr' -Skip:($env:OS -ne 'Windows_NT') {
-        $psi = New-Object Diagnostics.ProcessStartInfo
-        $psi.FileName = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-        $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $script:Junk + '"'
-        $psi.UseShellExecute = $false
-        $psi.RedirectStandardError = $true
-        $psi.RedirectStandardOutput = $true
-        $psi.EnvironmentVariables['__PSLockdownPolicy'] = '4'
-        $p = [Diagnostics.Process]::Start($psi)
-        $err = $p.StandardError.ReadToEnd()
-        $null = $p.StandardOutput.ReadToEnd()
-        $p.WaitForExit()
-        $p.ExitCode | Should -Be 3
-        (($err -split '\r?\n') -join ' ') -replace '\s+', ' ' | Should -BeLike '*Constrained Language Mode*'
-    }
+    # ponytail: no child-process CLM test. __PSLockdownPolicy does not force CLM on the runner (CI run 41055797773);
+    # the guard is covered on real 5.1 by the CLM runspace test in Report.Tests.ps1.
 }
