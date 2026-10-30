@@ -294,7 +294,7 @@ Acceptance (TDD for plan, args and re-checks; fixtures on Linux):
 
 ## T8 Real run, README and how-it-works (Human)
 - Agent: windows-dev (docs) · Run: human on Windows 11 · Reviewer: windows-reviewer
-- Status: todo
+- Status: in-progress (docs being written; example output and scan time wait for the human run)
 
 **Human:**
 1. Run `junk.cmd` on a real profile and note the wall time. If it's over about 5 min, mark `ponytail:` on the hot loop and propose moving it into C#.
