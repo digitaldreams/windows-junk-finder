@@ -169,6 +169,27 @@ Describe 'Main' {
         Main -Arguments @() -LanguageMode 'ConstrainedLanguage' | Should -Be 3
         Should -Invoke Test-Elevated -Times 0
     }
+    # Runs on every OS: a language-mode-restricted runspace behaves the same. $host.UI.WriteErrorLine is blocked under CLM
+    # ("Method invocation is supported only on core types"), so the guard falls back to Write-Error there.
+    It 'in a real Constrained Language Mode runspace the guard returns 3 and the message reaches the error stream' {
+        $iss = [initialsessionstate]::CreateDefault()
+        $iss.LanguageMode = 'ConstrainedLanguage'
+        if ($env:OS -eq 'Windows_NT') { $iss.ExecutionPolicy = [Microsoft.PowerShell.ExecutionPolicy]::Bypass }
+        $rs = [runspacefactory]::CreateRunspace($iss)
+        $rs.Open()
+        $ps = [powershell]::Create()
+        try {
+            $ps.Runspace = $rs
+            $junk = [IO.Path]::GetFullPath((Join-Path (Join-Path $PSScriptRoot '..') 'junk.ps1'))
+            [void]$ps.AddScript(". '$junk'; Main -Arguments @()")
+            $out = @($ps.Invoke())
+            $out.Count | Should -Be 1
+            $out[0] | Should -Be 3
+            @($ps.Streams.Error).Count | Should -Be 1
+            $ps.Streams.Error[0].ToString() | Should -BeLike '*Constrained Language Mode*'
+        }
+        finally { $ps.Dispose(); $rs.Dispose() }
+    }
     It 'clean without a section prints usage and exits 2 without scanning' {
         Mock Test-Elevated { $false }
         Mock Invoke-JunkScan { throw 'must not scan' }

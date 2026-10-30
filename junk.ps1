@@ -308,12 +308,13 @@ function Invoke-JunkWalk {
 }
 
 # Dirs never entered, matched on the path relative to home (case-insensitive). OneDrive* is handled in the walk.
-$script:SkipDirs = New-Object 'System.Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+# A hashtable (case-insensitive), not a HashSet: New-Object of non-core types throws at load under Constrained Language Mode, before the guard can run.
+$script:SkipDirs = @{}
 foreach ($d in @('Documents', 'Desktop', 'Pictures', 'Music', 'Videos', 'Favorites', '.ssh', '.gnupg', '.aws', '.azure', '.kube',
         '.config', '.local', '.cache', '.rustup', '.cargo\bin', '.nuget\packages', '.pnpm-store', 'scoop',
         'AppData\Local\Packages', 'AppData\Local\Microsoft\WindowsApps', 'AppData\Local\Microsoft\Outlook',
         'AppData\Local\Microsoft\Credentials', 'AppData\Local\Programs', 'AppData\Local\pnpm', 'AppData\Roaming\Microsoft')) {
-    [void]$script:SkipDirs.Add($d)
+    $script:SkipDirs[$d] = $true
 }
 
 function Invoke-JunkScan {
@@ -712,7 +713,12 @@ function Main {
     # Language check first, and Test-Elevated only after it: CLM blocks WindowsPrincipal. $host.UI works under CLM.
     $block = Get-StartupBlock -LanguageMode $LanguageMode -Elevated $false
     if (-not $block) { $block = Get-StartupBlock -LanguageMode $LanguageMode -Elevated (Test-Elevated) }
-    if ($block) { $host.UI.WriteErrorLine($block); return 3 }
+    if ($block) {
+        # CLM allows method calls on core types only, so $host.UI.WriteErrorLine is blocked there; Write-Error is not.
+        if ([string]$ExecutionContext.SessionState.LanguageMode -eq 'FullLanguage') { $host.UI.WriteErrorLine($block) }
+        else { Write-Error -Message $block -ErrorAction Continue }
+        return 3
+    }
     try { [Console]::OutputEncoding = New-Object Text.UTF8Encoding $false } catch { Write-Verbose 'console encoding not set' }
     if (@($Arguments).Count -gt 0) {
         if ($Arguments[0] -eq 'clean') {

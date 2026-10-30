@@ -1,5 +1,5 @@
 BeforeAll {
-    . (Join-Path $PSScriptRoot '..' 'junk.ps1')
+    . (Join-Path (Join-Path $PSScriptRoot '..') 'junk.ps1')
 }
 
 Describe 'junk.ps1' {

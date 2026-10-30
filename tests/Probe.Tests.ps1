@@ -1,5 +1,5 @@
 BeforeAll {
-    . (Join-Path $PSScriptRoot '..' 'tools' 'probe.ps1')
+    . (Join-Path (Join-Path (Join-Path $PSScriptRoot '..') 'tools') 'probe.ps1')
 }
 
 Describe 'Format-ProbeLine' {

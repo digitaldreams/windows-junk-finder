@@ -3,14 +3,29 @@ BeforeDiscovery {
 }
 
 BeforeAll {
+    $script:Links = @()
     $script:NoChmod = ($env:OS -eq 'Windows_NT') -or ((& id -u) -eq '0')
     . (Join-Path (Join-Path $PSScriptRoot '..') 'junk.ps1')
     # Fixtures are created "now" (Created can't be set on Linux), so $Now sits 100 days ahead.
     $script:Now = [DateTime]::UtcNow.AddDays(100)
+    # Unlink (link only) whatever a test created, so Pester's Remove-Item -Recurse never traverses a link after a failure.
+    function Remove-TestLinks {
+        foreach ($l in $script:Links) {
+            $i = Get-Item -LiteralPath $l -Force -ErrorAction SilentlyContinue
+            if ($i -and ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                if ($i.PSIsContainer) { [IO.Directory]::Delete($l, $false) } else { [IO.File]::Delete($l) }
+            }
+        }
+        $script:Links = @()
+    }
+    function Add-Link($path, $target) { # needs admin or Developer Mode on Windows
+        $script:Links += $path
+        New-Item -ItemType SymbolicLink -Path $path -Target ($target -replace '/', [string][IO.Path]::DirectorySeparatorChar) | Out-Null
+    }
     function Add-Dir($p) { New-Item -ItemType Directory -Force -Path $p | Out-Null }
     function Add-File($p, [double]$ModDays = 0) {
         Add-Dir (Split-Path $p -Parent)
-        Set-Content -LiteralPath $p -Value 'x'
+        [IO.File]::WriteAllText($p, "x`n")
         [IO.File]::SetLastWriteTimeUtc($p, $script:Now.AddDays(-$ModDays))
     }
     function Add-Big($p) { # sparse 600 MB, 400 d old
@@ -63,7 +78,7 @@ Describe 'Get-EntryVerdict' {
 }
 
 Describe 'Long path and known-folder helpers' {
-    It 'Get-LongPath is a no-op off Windows' -Skip:($env:OS -eq 'Windows_NT') {
+    It 'Get-LongPath is a no-op off Windows' -Tag Linux -Skip:($env:OS -eq 'Windows_NT') {
         Get-LongPath '/tmp/x' | Should -Be '/tmp/x'
     }
     It 'Get-LongPath prefixes drive and UNC paths' -Tag Windows -Skip:($env:OS -ne 'Windows_NT') {
@@ -71,7 +86,7 @@ Describe 'Long path and known-folder helpers' {
         Get-LongPath '\\srv\share\x' | Should -Be '\\?\UNC\srv\share\x'
         Get-LongPath '\\?\C:\x' | Should -Be '\\?\C:\x'
     }
-    It 'Get-DownloadsFolder is $null off Windows' -Skip:($env:OS -eq 'Windows_NT') {
+    It 'Get-DownloadsFolder is $null off Windows' -Tag Linux -Skip:($env:OS -eq 'Windows_NT') {
         Get-DownloadsFolder | Should -BeNullOrEmpty
     }
 }
@@ -82,7 +97,7 @@ Describe 'Test-FixedDrive' {
     ) {
         Test-FixedDrive $P | Should -BeFalse
     }
-    It 'is true off Windows for a normal path' -Skip:($env:OS -eq 'Windows_NT') {
+    It 'is true off Windows for a normal path' -Tag Linux -Skip:($env:OS -eq 'Windows_NT') {
         Test-FixedDrive '/tmp/x' | Should -BeTrue
     }
 }
@@ -93,6 +108,7 @@ Describe 'Invoke-JunkScan' {
         Add-Dir $script:H
     }
     AfterEach {
+        Remove-TestLinks
         if (-not $script:NoChmod) { & chmod -R 755 $script:H }
     }
 
@@ -146,8 +162,8 @@ Describe 'Invoke-JunkScan' {
         $outside = Join-Path $TestDrive ('o' + [guid]::NewGuid().ToString('N'))
         Add-Project $outside 'proj'
         Add-Project $script:H 'code/app'
-        New-Item -ItemType SymbolicLink -Path (Join-Path $script:H 'link') -Target $outside | Out-Null
-        New-Item -ItemType SymbolicLink -Path (Join-Path $script:H 'code/loop') -Target $script:H | Out-Null
+        Add-Link (Join-Path $script:H 'link') $outside
+        Add-Link (Join-Path $script:H 'code/loop') $script:H
         $r = Scan $script:H
         @($r.Findings).Count | Should -Be 1
         $r.Findings[0].Path | Should -Be 'code\app\node_modules'
@@ -158,7 +174,7 @@ Describe 'Invoke-JunkScan' {
         $real = Join-Path $TestDrive ('m' + [guid]::NewGuid().ToString('N') + '.msi')
         Add-File $real 90
         Add-Dir (Join-Path $script:H 'Downloads')
-        New-Item -ItemType SymbolicLink -Path (Join-Path $script:H 'Downloads/link.msi') -Target $real | Out-Null
+        Add-Link (Join-Path $script:H 'Downloads/link.msi') $real
         @((Scan $script:H).Findings).Count | Should -Be 0
         Add-File (Join-Path $script:H 'Downloads/real.msi') 90
         $r = Scan $script:H
@@ -206,7 +222,7 @@ Describe 'Invoke-JunkScan' {
         @($script:seen | Where-Object { $_.StartsWith($P + '\') }).Count | Should -Be 0
     }
 
-    It 'a matched dir with an unreadable subdir is review with a suffix, not junk' -Skip:$script:NoChmod {
+    It 'a matched dir with an unreadable subdir is review with a suffix, not junk' -Tag Linux -Skip:$script:NoChmod {
         Add-Project $script:H 'code/app'
         Add-File (Join-Path $script:H 'code/app/node_modules/a/locked/f') 0
         & chmod 000 (Join-Path $script:H 'code/app/node_modules/a/locked')
@@ -218,13 +234,13 @@ Describe 'Invoke-JunkScan' {
 
     It 'a symlink inside a matched dir makes it review (pnpm junction case)' {
         Add-Project $script:H 'code/app'
-        New-Item -ItemType SymbolicLink -Path (Join-Path $script:H 'code/app/node_modules/lnk') -Target (Join-Path $script:H 'code') | Out-Null
+        Add-Link (Join-Path $script:H 'code/app/node_modules/lnk') (Join-Path $script:H 'code')
         $f = (Scan $script:H).Findings[0]
         $f.Tier | Should -Be 'review'
         $f.Reason | Should -BeLike '*; some contents could not be read'
     }
 
-    It 'a unaddressable name inside a matched dir makes it review' {
+    It 'a unaddressable name inside a matched dir makes it review' -Tag Linux -Skip:($env:OS -eq 'Windows_NT') {
         Add-Project $script:H 'code/app'
         Add-File (Join-Path $script:H 'code/app/node_modules/a/nul.txt') 0
         (Scan $script:H).Findings[0].Tier | Should -Be 'review'
@@ -271,7 +287,7 @@ Describe 'Invoke-JunkScan' {
         @($script:seen | Where-Object { $_.StartsWith('Downloads\a\b') }).Count | Should -Be 0
     }
 
-    It 'chmod 000 dir is recorded as access denied and the scan continues' -Skip:$script:NoChmod {
+    It 'chmod 000 dir is recorded as access denied and the scan continues' -Tag Linux -Skip:$script:NoChmod {
         Add-Project $script:H 'code/app'
         Add-Dir (Join-Path $script:H 'locked/inner')
         & chmod 000 (Join-Path $script:H 'locked')
@@ -282,7 +298,7 @@ Describe 'Invoke-JunkScan' {
         $r.Skipped[0].Kind | Should -Be 'access denied'
     }
 
-    It 'a locked dir inside a matched node_modules is recorded once, top-most' -Skip:$script:NoChmod {
+    It 'a locked dir inside a matched node_modules is recorded once, top-most' -Tag Linux -Skip:$script:NoChmod {
         Add-Project $script:H 'code/app'
         Add-File (Join-Path $script:H 'code/app/node_modules/a/locked/inner/f') 60
         & chmod 000 (Join-Path $script:H 'code/app/node_modules/a/locked')
@@ -291,7 +307,7 @@ Describe 'Invoke-JunkScan' {
         $r.Skipped[0].Path | Should -Be 'code\app\node_modules\a\locked'
     }
 
-    It 'node_modules. next to a real one is unaddressable; only the real one is found' {
+    It 'node_modules. next to a real one is unaddressable; only the real one is found' -Tag Linux -Skip:($env:OS -eq 'Windows_NT') {
         Add-Project $script:H 'code/app'
         Add-File (Join-Path $script:H 'code/app/node_modules./x/i.js') 60
         $r = Scan $script:H
@@ -302,7 +318,7 @@ Describe 'Invoke-JunkScan' {
         $r.Skipped[0].Kind | Should -Be 'unaddressable name'
     }
 
-    It 'an unaddressable file inside a matched dir is not counted' {
+    It 'an unaddressable file inside a matched dir is not counted' -Tag Linux -Skip:($env:OS -eq 'Windows_NT') {
         Add-Project $script:H 'code/app'
         Add-File (Join-Path $script:H 'code/app/node_modules/a/nul.txt') 60
         $r = Scan $script:H

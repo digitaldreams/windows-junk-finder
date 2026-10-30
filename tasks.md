@@ -79,7 +79,7 @@ Shared gates:
    - Interactive runs pass `FOF_WANTNUKEWARNING`, so Windows asks before permanently deleting an item too big for the bin. The user is at the screen to answer.
    - `--yes` runs drop that flag, because a modal dialog would hang an unattended run. The `--yes` help line and the README say that oversized items are then deleted permanently.
    - Rejected for v1: skipping items larger than the bin (needs the volume GUID lookup and more code).
-2. **CI on GitHub `windows-latest`** (T7): approved. Push to a new **private** GitHub repo.
+2. **CI on GitHub `windows-latest`** (T7): approved. Repo `digitaldreams/windows-junk-finder` is **public** (the human created and pushed it, 2026-10-30).
 
 ---
 
@@ -280,7 +280,7 @@ Acceptance (TDD for plan, args and re-checks; fixtures on Linux):
 
 ## T7 CI on real Windows
 - Agent: windows-dev · Reviewer: windows-reviewer
-- Status: todo
+- Status: review (waiting for the first CI run)
 
 `.github/workflows/test.yml` runs on `windows-latest` with `shell: powershell` (5.1). The tests themselves must then load on 5.1: fix PS7-only calls in `tests/` (e.g. 3-argument `Join-Path` in `Smoke.Tests.ps1`, flagged in T1 review). Module downloads in `test.sh` have no checksum (T1 review; accepted, dev-only).
 1. Install Pester 5 (`-Force -SkipPublisherCheck`).

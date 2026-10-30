@@ -1,11 +1,26 @@
 BeforeAll {
+    $script:Links = @()
     . (Join-Path (Join-Path $PSScriptRoot '..') 'junk.ps1')
     $script:Now = [DateTime]::UtcNow.AddDays(100)
     $script:Sep = [string][IO.Path]::DirectorySeparatorChar
+    # Unlink (link only) whatever a test created, so Pester's Remove-Item -Recurse never traverses a link after a failure.
+    function Remove-TestLinks {
+        foreach ($l in $script:Links) {
+            $i = Get-Item -LiteralPath $l -Force -ErrorAction SilentlyContinue
+            if ($i -and ($i.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                if ($i.PSIsContainer) { [IO.Directory]::Delete($l, $false) } else { [IO.File]::Delete($l) }
+            }
+        }
+        $script:Links = @()
+    }
+    function Add-Link($path, $target) { # needs admin or Developer Mode on Windows
+        $script:Links += $path
+        New-Item -ItemType SymbolicLink -Path $path -Target ($target -replace '/', [string][IO.Path]::DirectorySeparatorChar) | Out-Null
+    }
     function Add-Dir($p) { New-Item -ItemType Directory -Force -Path $p | Out-Null }
     function Add-File($p, [double]$ModDays = 0) {
         Add-Dir (Split-Path $p -Parent)
-        Set-Content -LiteralPath $p -Value 'x'
+        [IO.File]::WriteAllText($p, "x`n")
         [IO.File]::SetLastWriteTimeUtc($p, $script:Now.AddDays(-$ModDays))
     }
     # Finding for a fixture: Path uses '\', FullPath uses the real separator.
@@ -106,6 +121,7 @@ Describe 'Get-CleanPlan' {
 }
 
 Describe 'Test-CleanTarget' {
+    AfterEach { Remove-TestLinks }
     BeforeEach { $script:H = Join-Path $TestDrive ('h' + [guid]::NewGuid().ToString('N')); Add-Dir $script:H }
     It 'passes an untouched item' {
         Add-File "$script:H/AppData/Local/Temp/a.tmp"
@@ -125,14 +141,14 @@ Describe 'Test-CleanTarget' {
     It 'rejects an item replaced by a symlink' {
         Add-File "$script:H/outside/target.txt"
         Add-Dir "$script:H/AppData/Local/Temp"
-        New-Item -ItemType SymbolicLink -Path "$script:H/AppData/Local/Temp/a.tmp" -Target "$script:H/outside/target.txt" | Out-Null
+        Add-Link "$script:H/AppData/Local/Temp/a.tmp" "$script:H/outside/target.txt"
         Test-CleanTarget (NewF $script:H 'AppData\Local\Temp\a.tmp') $script:H | Should -BeExactly 'is now a reparse point'
     }
     It 'rejects a parent swapped for a symlink to a directory outside the root' {
         $root = Join-Path $script:H 'root'
         Add-File "$script:H/elsewhere/a.tmp"
         Add-Dir "$root/AppData/Local"
-        New-Item -ItemType SymbolicLink -Path "$root/AppData/Local/Temp" -Target "$script:H/elsewhere" | Out-Null
+        Add-Link "$root/AppData/Local/Temp" "$script:H/elsewhere"
         Test-CleanTarget (NewF $root 'AppData\Local\Temp\a.tmp') $root | Should -BeExactly 'parent is now a reparse point'
     }
     It 'rejects a path outside the root' {
@@ -144,7 +160,7 @@ Describe 'Test-CleanTarget' {
         $f = NewF $script:H 'a\..\a.tmp'
         Test-CleanTarget $f $script:H | Should -BeExactly 'path is not under the root'
     }
-    It 'rejects a name that is no longer addressable' {
+    It 'rejects a name that is no longer addressable' -Tag Linux -Skip:($env:OS -eq 'Windows_NT') {
         Add-File "$script:H/AppData/Local/Temp/x."
         Test-CleanTarget (NewF $script:H 'AppData\Local\Temp\x.') $script:H | Should -BeExactly 'unaddressable name'
     }
@@ -171,33 +187,34 @@ Describe 'Get-FindingRoot' {
 }
 
 Describe 'Remove-JunkPermanent' {
+    AfterEach { Remove-TestLinks }
     BeforeEach { $script:H = Join-Path $TestDrive ('p' + [guid]::NewGuid().ToString('N')); Add-Dir $script:H }
     It 'removes a tree that contains a ReadOnly file and directory' {
         Add-File "$script:H/t/a/b/ro.txt"
         Add-File "$script:H/t/c.txt"
         [IO.File]::SetAttributes("$script:H/t/a/b/ro.txt", [IO.FileAttributes]::ReadOnly)
-        Remove-JunkPermanent "$script:H/t"
+        Remove-JunkPermanent (Join-Path $script:H 't')
         Test-Path -LiteralPath "$script:H/t" | Should -BeFalse
     }
     It 'removes a symlink inside the tree and keeps its target' {
         Add-File "$script:H/keep/important.txt"
         Add-File "$script:H/t/a.txt"
-        New-Item -ItemType SymbolicLink -Path "$script:H/t/link" -Target "$script:H/keep" | Out-Null
-        New-Item -ItemType SymbolicLink -Path "$script:H/t/flink" -Target "$script:H/keep/important.txt" | Out-Null
-        Remove-JunkPermanent "$script:H/t"
+        Add-Link "$script:H/t/link" "$script:H/keep"
+        Add-Link "$script:H/t/flink" "$script:H/keep/important.txt"
+        Remove-JunkPermanent (Join-Path $script:H 't')
         Test-Path -LiteralPath "$script:H/t" | Should -BeFalse
         Test-Path -LiteralPath "$script:H/keep/important.txt" | Should -BeTrue
     }
     It 'removes a top-level symlink as a link only' {
         Add-File "$script:H/keep/important.txt"
-        New-Item -ItemType SymbolicLink -Path "$script:H/link" -Target "$script:H/keep" | Out-Null
-        Remove-JunkPermanent "$script:H/link"
+        Add-Link "$script:H/link" "$script:H/keep"
+        Remove-JunkPermanent (Join-Path $script:H 'link')
         (Get-Item -LiteralPath "$script:H/link" -ErrorAction SilentlyContinue) | Should -BeNullOrEmpty
         Test-Path -LiteralPath "$script:H/keep/important.txt" | Should -BeTrue
     }
     It 'removes a single file' {
         Add-File "$script:H/f.txt"
-        Remove-JunkPermanent "$script:H/f.txt"
+        Remove-JunkPermanent (Join-Path $script:H 'f.txt')
         Test-Path -LiteralPath "$script:H/f.txt" | Should -BeFalse
     }
 }
@@ -210,6 +227,7 @@ Describe 'Get-RecycleFlags' {
 }
 
 Describe 'Invoke-CleanItems' {
+    AfterEach { Remove-TestLinks }
     BeforeEach { $script:H = Join-Path $TestDrive ('c' + [guid]::NewGuid().ToString('N')); Add-Dir $script:H }
     It 'recycles with the plain path and the interactive flags' {
         Add-File "$script:H/AppData/Local/Temp/a.tmp"
@@ -254,7 +272,7 @@ Describe 'Invoke-CleanItems' {
         $root = Join-Path $script:H 'root'
         Add-File "$script:H/elsewhere/a.tmp"
         Add-Dir "$root/AppData/Local"
-        New-Item -ItemType SymbolicLink -Path "$root/AppData/Local/Temp" -Target "$script:H/elsewhere" | Out-Null
+        Add-Link "$root/AppData/Local/Temp" "$script:H/elsewhere"
         $o = Invoke-CleanItems @(NewF $root 'AppData\Local\Temp\a.tmp') $root '' $true $true
         @($o.Skipped).Count | Should -Be 1
         Test-Path -LiteralPath "$script:H/elsewhere/a.tmp" | Should -BeTrue
